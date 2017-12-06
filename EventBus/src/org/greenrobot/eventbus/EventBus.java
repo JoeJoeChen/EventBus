@@ -46,8 +46,17 @@ public class EventBus {
     private static final EventBusBuilder DEFAULT_BUILDER = new EventBusBuilder();
     private static final Map<Class<?>, List<Class<?>>> eventTypesCache = new HashMap<>();
 
+    /**
+     * key是event的时间class, value 是订阅方列表
+     */
     private final Map<Class<?>, CopyOnWriteArrayList<Subscription>> subscriptionsByEventType;
+    /**
+     * key 订阅者，value 一共订阅的事件(列表)
+     */
     private final Map<Object, List<Class<?>>> typesBySubscriber;
+    /**
+     * 粘性订阅事件
+     */
     private final Map<Class<?>, Object> stickyEvents;
 
     private final ThreadLocal<PostingThreadState> currentPostingThreadState = new ThreadLocal<PostingThreadState>() {
@@ -136,8 +145,11 @@ public class EventBus {
      * ThreadMode} and priority.
      */
     public void register(Object subscriber) {
+        // 获取订阅者类名字
         Class<?> subscriberClass = subscriber.getClass();
+        // 根据订阅者类名，找出已经订阅的 订阅者方法
         List<SubscriberMethod> subscriberMethods = subscriberMethodFinder.findSubscriberMethods(subscriberClass);
+        // 加个同步锁，会有多处调用，保证原子性
         synchronized (this) {
             for (SubscriberMethod subscriberMethod : subscriberMethods) {
                 subscribe(subscriber, subscriberMethod);
@@ -147,9 +159,13 @@ public class EventBus {
 
     // Must be called in synchronized block
     private void subscribe(Object subscriber, SubscriberMethod subscriberMethod) {
+        // 拿到订阅的 event 类型
         Class<?> eventType = subscriberMethod.eventType;
+        // 构建一个订阅关系
         Subscription newSubscription = new Subscription(subscriber, subscriberMethod);
+        // 多线程安全的里 列表
         CopyOnWriteArrayList<Subscription> subscriptions = subscriptionsByEventType.get(eventType);
+        // 根据eventtype获取 订阅关系(订阅关系包括订阅者和订阅方法)
         if (subscriptions == null) {
             subscriptions = new CopyOnWriteArrayList<>();
             subscriptionsByEventType.put(eventType, subscriptions);
@@ -162,6 +178,9 @@ public class EventBus {
 
         int size = subscriptions.size();
         for (int i = 0; i <= size; i++) {
+            // 是订阅关系列表最后一个，或者  当前订阅方法，权限高于所有已经存在的其他 订阅方法
+            // 优先级没有变化，追加在最后一个；
+            // 优先级高的，直接加载当前i下标的位置, 优先级越高越靠前
             if (i == size || subscriberMethod.priority > subscriptions.get(i).subscriberMethod.priority) {
                 subscriptions.add(i, newSubscription);
                 break;
@@ -175,7 +194,12 @@ public class EventBus {
         }
         subscribedEvents.add(eventType);
 
+        // 处理粘性订阅事件(粘性订阅是指，在注册这个订阅者的时候，遍历method, 找到粘性事件的方法，手动
+        // 派发一次事件，即 模拟一次post给这个新的订阅者，其他订阅者(不包括他的父类)不会收到)
+
+        // sticky 默认false
         if (subscriberMethod.sticky) {
+            // 默认true
             if (eventInheritance) {
                 // Existing sticky events of all subclasses of eventType have to be considered.
                 // Note: Iterating over all events may be inefficient with lots of sticky events,
@@ -196,6 +220,12 @@ public class EventBus {
         }
     }
 
+    /**
+     * 派发一次事件
+     *
+     * @param newSubscription
+     * @param stickyEvent
+     */
     private void checkPostStickyEventToSubscription(Subscription newSubscription, Object stickyEvent) {
         if (stickyEvent != null) {
             // If the subscriber is trying to abort the event, it will fail (event is not tracked in posting state)
@@ -426,6 +456,7 @@ public class EventBus {
 
     private void postToSubscription(Subscription subscription, Object event, boolean isMainThread) {
         switch (subscription.subscriberMethod.threadMode) {
+            // 直接调用
             case POSTING:
                 invokeSubscriber(subscription, event);
                 break;

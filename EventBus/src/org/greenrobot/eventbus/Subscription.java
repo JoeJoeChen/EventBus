@@ -15,7 +15,13 @@
  */
 package org.greenrobot.eventbus;
 
+/**
+ * 订阅者信息
+ */
 final class Subscription {
+    /**
+     * 订阅者
+     */
     final Object subscriber;
     final SubscriberMethod subscriberMethod;
     /**
